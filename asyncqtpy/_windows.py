@@ -31,19 +31,20 @@ class _ProactorEventLoop(asyncio.ProactorEventLoop):
     def __init__(self):
         super().__init__(_IocpProactor())
 
-        self.__event_signaller = _make_signaller(QtCore, list)
-        self.__event_signal = self.__event_signaller.signal
-        self.__event_signal.connect(self._process_events)
-        self.__event_poller = _EventPoller(self.__event_signal)
+        self.__event_signaller = _make_signaller(list)
+        signal = self.__event_signal = self.__event_signaller.signal
+        signal.connect(self._process_events)
+        self.__event_poller = _EventPoller(signal)
 
     def _process_events(self, events):
         """Process events from proactor."""
+        log = self._logger
         for f, callback, transferred, key, ov in events:
             try:
-                self._logger.debug("Invoking event callback {}".format(callback))
+                log.debug(f"Invoking event callback {callback}")
                 value = callback(transferred, key, ov)
             except OSError as e:
-                self._logger.warning("Event callback failed", exc_info=sys.exc_info())
+                log.warning("Event callback failed", exc_info=sys.exc_info())
                 if not f.done():
                     f.set_exception(e)
             else:
@@ -157,16 +158,17 @@ class _EventWorker(QtCore.QThread):
         self.wait()
 
     def run(self):
-        self._logger.debug("Thread started")
+        log = self._logger
+        log.debug("Thread started")
         self.__semaphore.release()
 
         while not self.__stop:
             events = self.__proactor.select(0.01)
             if events:
-                self._logger.debug("Got events from poll: {}".format(events))
+                log.debug(f"Got events from poll: {events}")
                 self.__sig_events.emit(events)
 
-        self._logger.debug("Exiting thread")
+        log.debug("Exiting thread")
 
 
 @with_logger
@@ -178,7 +180,7 @@ class _EventPoller:
         self.sig_events = sig_events
 
     def start(self, proactor):
-        self._logger.debug("Starting (proactor: {})...".format(proactor))
+        self._logger.debug(f"Starting (proactor: {proactor})...")
         self.__worker = _EventWorker(proactor, self)
         self.__worker.start()
 
