@@ -4,19 +4,29 @@
 # BSD License
 
 """UNIX specific Quamash functionality."""
-
 import asyncio
-import selectors
 import collections
+import logging
+import selectors
+from typing import Iterator, Optional, Protocol, Union
 
 from . import QtCore, with_logger
 
+QSocketNotifier = QtCore.QSocketNotifier
 
-EVENT_READ = (1 << 0)
-EVENT_WRITE = (1 << 1)
+EVENT_READ = 1 << 0
+EVENT_WRITE = 1 << 1
 
 
-def _fileobj_to_fd(fileobj):
+class HasFileno(Protocol):
+    def fileno(self) -> int:
+        ...
+
+
+FileObj = Union[int, HasFileno]
+
+
+def _fileobj_to_fd(fileobj: Union[int, HasFileno, selectors.SelectorKey]) -> int:
     """
     Return a file descriptor from a file object.
 
@@ -32,13 +42,15 @@ def _fileobj_to_fd(fileobj):
     """
     if isinstance(fileobj, int):
         fd = fileobj
+    elif isinstance(fileobj, selectors.SelectorKey):
+        fd = fileobj.fd
     else:
         try:
             fd = int(fileobj.fileno())
         except (AttributeError, TypeError, ValueError) as ex:
-            raise ValueError("Invalid file object: {!r}".format(fileobj)) from ex
+            raise ValueError(f"Invalid file object: {fileobj!r}") from ex
     if fd < 0:
-        raise ValueError("Invalid file descriptor: {}".format(fd))
+        raise ValueError(f"Invalid file descriptor: {fd}")
     return fd
 
 
@@ -46,39 +58,43 @@ class _SelectorMapping(collections.abc.Mapping):
 
     """Mapping of file objects to selector keys."""
 
-    def __init__(self, selector):
+    def __init__(self, selector: "_Selector"):
         self._selector = selector
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self._selector._fd_to_key)
 
-    def __getitem__(self, fileobj):
+    def __getitem__(self, fileobj: FileObj) -> selectors.SelectorKey:
         try:
             fd = self._selector._fileobj_lookup(fileobj)
             return self._selector._fd_to_key[fd]
         except KeyError:
-            raise KeyError("{!r} is not registered".format(fileobj)) from None
+            raise KeyError(f"{fileobj!r} is not registered") from None
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[FileObj]:
         return iter(self._selector._fd_to_key)
 
 
 @with_logger
 class _Selector(selectors.BaseSelector):
+    _logger: logging.Logger
+
     def __init__(self, parent):
         # this maps file descriptors to keys
-        self._fd_to_key = {}
+        self._fd_to_key: dict[FileObj, selectors.SelectorKey] = {}
         # read-only mapping returned by get_map()
         self.__map = _SelectorMapping(self)
-        self.__read_notifiers = {}
-        self.__write_notifiers = {}
+        self.__read_notifiers: dict[int, QtCore.QSocketNotifier] = {}
+        self.__write_notifiers: dict[int, QtCore.QSocketNotifier] = {}
         self.__parent = parent
 
     def select(self, *args, **kwargs):
         """Implement abstract method even though we don't need it."""
         raise NotImplementedError
 
-    def _fileobj_lookup(self, fileobj):
+    def _fileobj_lookup(
+        self, fileobj: Union[selectors.SelectorKey, int, HasFileno]
+    ) -> int:
         """Return a file descriptor from a file object.
 
         This wraps _fileobj_to_fd() to do an exhaustive search in case
@@ -97,64 +113,88 @@ class _Selector(selectors.BaseSelector):
             # Raise ValueError after all.
             raise
 
-    def register(self, fileobj, events, data=None):
+    def register(
+        self, fileobj: FileObj, events: int, data: Optional[bytes] = None
+    ) -> selectors.SelectorKey:
         if (not events) or (events & ~(EVENT_READ | EVENT_WRITE)):
-            raise ValueError("Invalid events: {!r}".format(events))
+            raise ValueError(f"Invalid events: {events!r}")
 
-        key = selectors.SelectorKey(fileobj, self._fileobj_lookup(fileobj), events, data)
+        key = selectors.SelectorKey(
+            fileobj, self._fileobj_lookup(fileobj), events, data
+        )
+        fd = key.fd
+        if fd in self._fd_to_key:
+            raise KeyError(f"{fileobj!r} (FD {fd}) is already registered")
 
-        if key.fd in self._fd_to_key:
-            raise KeyError("{!r} (FD {}) is already registered".format(fileobj, key.fd))
-
-        self._fd_to_key[key.fd] = key
+        self._fd_to_key[fd] = key
 
         if events & EVENT_READ:
-            notifier = QtCore.QSocketNotifier(key.fd, QtCore.QSocketNotifier.Read)
+            notifier = QSocketNotifier(fd, QSocketNotifier.Read)
             notifier.activated.connect(self.__on_read_activated)
-            self.__read_notifiers[key.fd] = notifier
+            self.__read_notifiers[fd] = notifier
         if events & EVENT_WRITE:
-            notifier = QtCore.QSocketNotifier(key.fd, QtCore.QSocketNotifier.Write)
+            # TODO: This should pause
+            notifier = QSocketNotifier(fd, QSocketNotifier.Write)
             notifier.activated.connect(self.__on_write_activated)
-            self.__write_notifiers[key.fd] = notifier
+            self.__write_notifiers[fd] = notifier
 
         return key
 
-    def __on_read_activated(self, fd):
-        self._logger.debug('File {} ready to read'.format(fd))
+    def __on_read_activated(self, fd: int):
+        # self._logger.debug(f"File {fd} ready to read")
         key = self._key_from_fd(fd)
         if key:
             self.__parent._process_event(key, EVENT_READ & key.events)
 
-    def __on_write_activated(self, fd):
-        self._logger.debug('File {} ready to write'.format(fd))
+    def __on_write_activated(self, fd: int):
+        # On python 3.10 this fires continuously...
+        # self._logger.debug(f"File {fd} ready to write")
         key = self._key_from_fd(fd)
         if key:
             self.__parent._process_event(key, EVENT_WRITE & key.events)
+            self._pause_writer(fd)
 
-    def unregister(self, fileobj):
-        def drop_notifier(notifiers):
+    def _pause_writer(self, fd: int, timeout: float = 0.1):
+        # Pause write callbacks for a few ms to avoid high cpu usage
+        notifier = self.__write_notifiers[fd]
+        notifier.setEnabled(False)
+        loop = asyncio.get_event_loop()
+        loop.call_later(timeout, self._resume_writer, fd)
+
+    def _resume_writer(self, fd: int):
+        try:
+            notifier = self.__write_notifiers[fd]
+            notifier.setEnabled(True)
+        except KeyError:
+            pass
+
+    def unregister(self, fileobj: FileObj):
+        def drop_notifier(notifiers: dict[int, QtCore.QSocketNotifier]):
             try:
                 notifier = notifiers.pop(key.fd)
             except KeyError:
                 pass
             else:
-                notifier.activated.disconnect()
+                notifier.activated.disconnect()  # type: ignore
+                del notifier
 
         try:
             key = self._fd_to_key.pop(self._fileobj_lookup(fileobj))
         except KeyError:
-            raise KeyError("{!r} is not registered".format(fileobj)) from None
+            raise KeyError(f"{fileobj!r} is not registered") from None
 
         drop_notifier(self.__read_notifiers)
         drop_notifier(self.__write_notifiers)
 
         return key
 
-    def modify(self, fileobj, events, data=None):
+    def modify(
+        self, fileobj: FileObj, events: int, data: Optional[bytes] = None
+    ) -> selectors.SelectorKey:
         try:
             key = self._fd_to_key[self._fileobj_lookup(fileobj)]
         except KeyError:
-            raise KeyError("{!r} is not registered".format(fileobj)) from None
+            raise KeyError(f"{fileobj!r} is not registered") from None
         if events != key.events:
             self.unregister(fileobj)
             key = self.register(fileobj, events, data)
@@ -165,7 +205,7 @@ class _Selector(selectors.BaseSelector):
         return key
 
     def close(self):
-        self._logger.debug('Closing')
+        self._logger.debug("Closing")
         self._fd_to_key.clear()
         self.__read_notifiers.clear()
         self.__write_notifiers.clear()
@@ -173,7 +213,7 @@ class _Selector(selectors.BaseSelector):
     def get_map(self):
         return self.__map
 
-    def _key_from_fd(self, fd):
+    def _key_from_fd(self, fd: int) -> Optional[selectors.SelectorKey]:
         """
         Return the key associated to a given file descriptor.
 
@@ -191,8 +231,11 @@ class _Selector(selectors.BaseSelector):
 
 
 class _SelectorEventLoop(asyncio.SelectorEventLoop):
+    _logger: logging.Logger
+
     def __init__(self):
         self._signal_safe_callbacks = []
+        self._closed = False
 
         selector = _Selector(self)
         asyncio.SelectorEventLoop.__init__(self, selector)
@@ -203,19 +246,20 @@ class _SelectorEventLoop(asyncio.SelectorEventLoop):
     def _after_run_forever(self):
         pass
 
-    def _process_event(self, key, mask):
+    def _process_event(self, key: selectors.SelectorKey, mask: int):
         """Selector has delivered us an event."""
-        self._logger.debug('Processing event with key {} and mask {}'.format(key, mask))
+        # log = self._logger
+        # log.debug(f"Processing event with key {key} and mask {mask}")
         fileobj, (reader, writer) = key.fileobj, key.data
         if mask & selectors.EVENT_READ and reader is not None:
             if reader._cancelled:
                 self.remove_reader(fileobj)
             else:
-                self._logger.debug('Invoking reader callback: {}'.format(reader))
+                # log.debug(f"Invoking reader callback: {reader}")
                 reader._run()
         if mask & selectors.EVENT_WRITE and writer is not None:
             if writer._cancelled:
                 self.remove_writer(fileobj)
             else:
-                self._logger.debug('Invoking writer callback: {}'.format(writer))
+                # log.debug(f"Invoking writer callback: {writer}")
                 writer._run()

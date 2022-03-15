@@ -4,19 +4,20 @@
 # BSD License
 
 import pytest
-import asyncqt
+
+import asyncqtpy
 
 
 @pytest.fixture
 def executor(request):
-    exe = asyncqt.QThreadExecutor(5)
+    exe = asyncqtpy.QThreadExecutor(5)
     request.addfinalizer(exe.shutdown)
     return exe
 
 
 @pytest.fixture
 def shutdown_executor():
-    exe = asyncqt.QThreadExecutor(5)
+    exe = asyncqtpy.QThreadExecutor(5)
     exe.shutdown()
     return exe
 

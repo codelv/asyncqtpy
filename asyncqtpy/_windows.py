@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 # © 2018 Gerard Marull-Paretas <gerard@teslabs.com>
 # © 2014 Mark Harviston <mark.harviston@gmail.com>
 # © 2014 Arve Knudsen <arve.knudsen@gmail.com>
@@ -6,21 +7,21 @@
 """Windows specific Quamash functionality."""
 
 import asyncio
+import math
 import sys
 
 try:
-    import _winapi
     from asyncio import windows_events
+
     import _overlapped
+    import _winapi
 except ImportError:  # noqa
     pass  # w/o guarding this import py.test can't gather doctests on platforms w/o _winapi
-
-import math
 
 from . import QtCore, _make_signaller
 from ._common import with_logger
 
-UINT32_MAX = 0xffffffff
+UINT32_MAX = 0xFFFFFFFF
 
 
 class _ProactorEventLoop(asyncio.ProactorEventLoop):
@@ -39,10 +40,10 @@ class _ProactorEventLoop(asyncio.ProactorEventLoop):
         """Process events from proactor."""
         for f, callback, transferred, key, ov in events:
             try:
-                self._logger.debug('Invoking event callback {}'.format(callback))
+                self._logger.debug("Invoking event callback {}".format(callback))
                 value = callback(transferred, key, ov)
             except OSError as e:
-                self._logger.warning('Event callback failed', exc_info=sys.exc_info())
+                self._logger.warning("Event callback failed", exc_info=sys.exc_info())
                 if not f.done():
                     f.set_exception(e)
             else:
@@ -60,7 +61,7 @@ class _ProactorEventLoop(asyncio.ProactorEventLoop):
 class _IocpProactor(windows_events.IocpProactor):
     def __init__(self):
         self.__events = []
-        super(_IocpProactor, self).__init__()
+        super().__init__()
         self._lock = QtCore.QMutex()
 
     def select(self, timeout=None):
@@ -72,16 +73,16 @@ class _IocpProactor(windows_events.IocpProactor):
         return tmp
 
     def close(self):
-        self._logger.debug('Closing')
-        super(_IocpProactor, self).close()
+        self._logger.debug("Closing")
+        super().close()
 
     def recv(self, conn, nbytes, flags=0):
         with QtCore.QMutexLocker(self._lock):
-            return super(_IocpProactor, self).recv(conn, nbytes, flags)
+            return super().recv(conn, nbytes, flags)
 
     def send(self, conn, buf, flags=0):
         with QtCore.QMutexLocker(self._lock):
-            return super(_IocpProactor, self).send(conn, buf, flags)
+            return super().send(conn, buf, flags)
 
     def _poll(self, timeout=None):
         """Override in order to handle events in a threadsafe manner."""
@@ -125,15 +126,15 @@ class _IocpProactor(windows_events.IocpProactor):
 
     def _wait_for_handle(self, handle, timeout, _is_cancel):
         with QtCore.QMutexLocker(self._lock):
-            return super(_IocpProactor, self)._wait_for_handle(handle, timeout, _is_cancel)
+            return super()._wait_for_handle(handle, timeout, _is_cancel)
 
     def accept(self, listener):
         with QtCore.QMutexLocker(self._lock):
-            return super(_IocpProactor, self).accept(listener)
+            return super().accept(listener)
 
     def connect(self, conn, address):
         with QtCore.QMutexLocker(self._lock):
-            return super(_IocpProactor, self).connect(conn, address)
+            return super().connect(conn, address)
 
 
 @with_logger
@@ -156,16 +157,16 @@ class _EventWorker(QtCore.QThread):
         self.wait()
 
     def run(self):
-        self._logger.debug('Thread started')
+        self._logger.debug("Thread started")
         self.__semaphore.release()
 
         while not self.__stop:
             events = self.__proactor.select(0.01)
             if events:
-                self._logger.debug('Got events from poll: {}'.format(events))
+                self._logger.debug("Got events from poll: {}".format(events))
                 self.__sig_events.emit(events)
 
-        self._logger.debug('Exiting thread')
+        self._logger.debug("Exiting thread")
 
 
 @with_logger
@@ -177,10 +178,10 @@ class _EventPoller:
         self.sig_events = sig_events
 
     def start(self, proactor):
-        self._logger.debug('Starting (proactor: {})...'.format(proactor))
+        self._logger.debug("Starting (proactor: {})...".format(proactor))
         self.__worker = _EventWorker(proactor, self)
         self.__worker.start()
 
     def stop(self):
-        self._logger.debug('Stopping worker thread...')
+        self._logger.debug("Stopping worker thread...")
         self.__worker.stop()

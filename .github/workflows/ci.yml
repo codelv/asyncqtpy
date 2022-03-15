@@ -1,0 +1,50 @@
+name: CI
+on: [push]
+
+jobs:
+  test:
+    name: Test ${{ matrix.os }} Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.9', '3.10']
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup python ${{ matrix.python-version}}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: pip install -U PyQt5 pytest pathlib2 pytest-cov codecov
+      - name: Install
+        run: pip install -e ./
+      - name: Run tests
+        run: pytest -v tests --cov atomdb --cov-report xml --asyncio-mode auto
+      - name: Coverage
+        run: codecov
+  check-code:
+    name: Test ${{ matrix.os }} Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.9', '3.10']
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup python ${{ matrix.python-version}}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: pip install -U isort flake8 black pytest pathlib2 pytest-cov codecov
+      - name: Install
+        run: pip install -e ./
+      - name: Run checks
+        run: |
+            isort --profile=black --check --diff ./
+            black --check --diff ./
+            flake8 --ignore=E501,W503 ./
+            mypy asyncqtpy --ignore-missing-imports

@@ -1,12 +1,10 @@
-import sys
 import asyncio
+import sys
 import time
 
-# from PyQt5.QtWidgets import (
-from PySide2.QtWidgets import (
-    QApplication, QProgressBar)
-from asyncqt import QEventLoop, QThreadExecutor
+from qtpy.QtWidgets import QApplication, QProgressBar
 
+from asyncqt import QEventLoop, QThreadExecutor
 
 app = QApplication(sys.argv)
 loop = QEventLoop(app)
@@ -26,13 +24,13 @@ async def master():
 async def first_50():
     for i in range(50):
         progress.setValue(i)
-        await asyncio.sleep(.1)
+        await asyncio.sleep(0.1)
 
 
 def last_50():
     for i in range(50, 100):
         loop.call_soon_threadsafe(progress.setValue, i)
-        time.sleep(.1)
+        time.sleep(0.1)
 
 
 with loop:
