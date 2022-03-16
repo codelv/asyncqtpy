@@ -13,8 +13,8 @@ __author__ = (
     "Mark Harviston <mark.harviston@gmail.com>, "
     "Arve Knudsen <arve.knudsen@gmail.com>"
 )
-__version__ = "0.9.1.dev0"
-__url__ = "https://github.com/gmarull/asyncqt"
+__version__ = "0.10.0"
+__url__ = "https://github.com/codelv/asyncqtpy"
 __license__ = "BSD"
 __all__ = (
     "QEventLoop",

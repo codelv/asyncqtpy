@@ -15,7 +15,7 @@ with open(desc_path, encoding="utf8") as desc_file:
 setup(
     name="asyncqtpy",
     version=version,
-    url="https://github.com/frmdstryr/asyncqtpy",
+    url="https://github.com/codelv/asyncqtpy",
     author=", ".join(("Gerard Marull-Paretas" "Mark Harviston" "Arve Knudsen")),
     author_email=", ".join(
         (
