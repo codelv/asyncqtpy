@@ -54,11 +54,11 @@ def _fileobj_to_fd(fileobj: Union[int, HasFileno, selectors.SelectorKey]) -> int
     return fd
 
 
-class _SelectorMapping(collections.abc.Mapping):
+class SelectorMapping(collections.abc.Mapping):
 
     """Mapping of file objects to selector keys."""
 
-    def __init__(self, selector: "_Selector"):
+    def __init__(self, selector: "Selector"):
         self._selector = selector
 
     def __len__(self) -> int:
@@ -76,14 +76,14 @@ class _SelectorMapping(collections.abc.Mapping):
 
 
 @with_logger
-class _Selector(selectors.BaseSelector):
+class Selector(selectors.BaseSelector):
     _logger: logging.Logger
 
     def __init__(self, parent):
         # this maps file descriptors to keys
         self._fd_to_key: dict[FileObj, selectors.SelectorKey] = {}
         # read-only mapping returned by get_map()
-        self.__map = _SelectorMapping(self)
+        self.__map = SelectorMapping(self)
         self.__read_notifiers: dict[int, QtCore.QSocketNotifier] = {}
         self.__write_notifiers: dict[int, QtCore.QSocketNotifier] = {}
         self.__parent = parent
@@ -230,14 +230,14 @@ class _Selector(selectors.BaseSelector):
             return None
 
 
-class _SelectorEventLoop(asyncio.SelectorEventLoop):
+class SelectorEventLoop(asyncio.SelectorEventLoop):
     _logger: logging.Logger
 
     def __init__(self):
         self._signal_safe_callbacks = []
         self._closed = False
 
-        selector = _Selector(self)
+        selector = Selector(self)
         asyncio.SelectorEventLoop.__init__(self, selector)
 
     def _before_run_forever(self):

@@ -30,6 +30,7 @@ setup(
     license="BSD",
     description="Implementation of the PEP 3156 Event-Loop with Qt using QtPy",
     long_description=long_description,
+    python_requires=">=3.9",
     keywords=["Qt", "QtPy", "asyncio"],
     classifiers=[
         "Development Status :: 3 - Alpha",

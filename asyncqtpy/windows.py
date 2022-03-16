@@ -9,6 +9,7 @@
 import asyncio
 import math
 import sys
+from typing import Optional
 
 try:
     from asyncio import windows_events
@@ -18,23 +19,23 @@ try:
 except ImportError:  # noqa
     pass  # w/o guarding this import py.test can't gather doctests on platforms w/o _winapi
 
-from . import QtCore, _make_signaller
-from ._common import with_logger
+from . import QtCore, make_signaller
+from .common import with_logger
 
 UINT32_MAX = 0xFFFFFFFF
 
 
-class _ProactorEventLoop(asyncio.ProactorEventLoop):
+class ProactorEventLoop(asyncio.ProactorEventLoop):
 
     """Proactor based event loop."""
 
     def __init__(self):
-        super().__init__(_IocpProactor())
+        super().__init__(IocpProactor())
 
-        self.__event_signaller = _make_signaller(list)
+        self.__event_signaller = make_signaller(list)
         signal = self.__event_signal = self.__event_signaller.signal
         signal.connect(self._process_events)
-        self.__event_poller = _EventPoller(signal)
+        self.__event_poller = EventPoller(signal)
 
     def _process_events(self, events):
         """Process events from proactor."""
@@ -59,13 +60,13 @@ class _ProactorEventLoop(asyncio.ProactorEventLoop):
 
 
 @with_logger
-class _IocpProactor(windows_events.IocpProactor):
+class IocpProactor(windows_events.IocpProactor):
     def __init__(self):
         self.__events = []
         super().__init__()
         self._lock = QtCore.QMutex()
 
-    def select(self, timeout=None):
+    def select(self, timeout: Optional[float] = None):
         """Override in order to handle events in a threadsafe manner."""
         if not self.__events:
             self._poll(timeout)
@@ -139,7 +140,7 @@ class _IocpProactor(windows_events.IocpProactor):
 
 
 @with_logger
-class _EventWorker(QtCore.QThread):
+class EventWorker(QtCore.QThread):
     def __init__(self, proactor, parent):
         super().__init__()
 
@@ -172,7 +173,7 @@ class _EventWorker(QtCore.QThread):
 
 
 @with_logger
-class _EventPoller:
+class EventPoller:
 
     """Polling of events in separate thread."""
 
@@ -181,7 +182,7 @@ class _EventPoller:
 
     def start(self, proactor):
         self._logger.debug(f"Starting (proactor: {proactor})...")
-        self.__worker = _EventWorker(proactor, self)
+        self.__worker = EventWorker(proactor, self)
         self.__worker.start()
 
     def stop(self):

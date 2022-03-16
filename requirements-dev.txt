@@ -1,5 +1,9 @@
+isort
+black
 flake8
 pytest
 pathlib2
 pytest-cov
+pytest-qt
+pytest-asyncio
 codecov

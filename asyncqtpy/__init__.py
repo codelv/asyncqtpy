@@ -34,7 +34,7 @@ import threading
 import time
 from concurrent.futures import Future
 from queue import Queue
-from typing import Optional, Protocol, cast
+from typing import Any, Callable, Optional, Protocol, Union, cast
 
 from qtpy import QtCore, QtWidgets
 
@@ -42,17 +42,24 @@ QApplication = QtWidgets.QApplication
 Slot = QtCore.Slot
 Signal = QtCore.Signal
 
-from ._common import with_logger  # noqa
+from .common import with_logger  # noqa
 
 logger = logging.getLogger(__name__)
 
+Callback = Callable[..., Any]
 
-def is_main_thread():
+
+class Executor(Protocol):
+    def submit(self, callback: Callback, *args, **kwargs):
+        ...
+
+
+def is_main_thread() -> bool:
     return threading.current_thread().name == "MainThread"
 
 
 @with_logger
-class _QThreadWorker(QtCore.QThread):
+class QThreadWorker(QtCore.QThread):
 
     """
     Read jobs from the queue and then execute them.
@@ -125,17 +132,17 @@ class QThreadExecutor:
         self.__max_workers = max_workers
         self.__queue: Queue = Queue()
         q = self.__queue
-        self.__workers = [_QThreadWorker(q, i + 1) for i in range(max_workers)]
+        self.__workers = [QThreadWorker(q, i + 1) for i in range(max_workers)]
         self.__been_shutdown = False
 
         for w in self.__workers:
             w.start()
 
-    def submit(self, callback, *args, **kwargs):
+    def submit(self, callback: Callback, *args, **kwargs) -> Future:
         if self.__been_shutdown:
             raise RuntimeError("QThreadExecutor has been shutdown")
 
-        future = Future()
+        future: Future = Future()
         self._logger.debug(
             f"Submitting callback {callback} with "
             f"args {args} and kwargs {kwargs} to thread worker queue"
@@ -143,10 +150,10 @@ class QThreadExecutor:
         self.__queue.put((future, callback, args, kwargs))
         return future
 
-    def map(self, func, *iterables, timeout=None):
+    def map(self, func, *iterables, timeout: Optional[float] = None):
         raise NotImplementedError("use as_completed on the event loop")
 
-    def shutdown(self, wait=True):
+    def shutdown(self, wait: bool = True):
         if self.__been_shutdown:
             raise RuntimeError("QThreadExecutor has been shutdown")
 
@@ -169,7 +176,7 @@ class QThreadExecutor:
         self.shutdown()
 
 
-def _make_signaller(*args):
+def make_signaller(*args: type):
     class Signaller(QtCore.QObject):
         signal = Signal(*args)
 
@@ -177,15 +184,15 @@ def _make_signaller(*args):
 
 
 @with_logger
-class _SimpleTimer(QtCore.QObject):
+class Timer(QtCore.QObject):
     _logger: logging.Logger
 
     def __init__(self):
         super().__init__()
-        self.__callbacks = {}
+        self.__callbacks: dict[int, asyncio.Handle] = {}
         self._stopped = False
 
-    def add_callback(self, handle, delay: float = 0):
+    def add_callback(self, handle: asyncio.Handle, delay: float = 0):
         timerid = self.startTimer(int(delay * 1000))
         self._logger.debug(f"Registering timer id {timerid}")
         assert timerid not in self.__callbacks
@@ -204,7 +211,7 @@ class _SimpleTimer(QtCore.QObject):
             try:
                 handle = self.__callbacks[timerid]
             except KeyError as e:
-                log.debug(str(e))
+                log.debug(f"{e}")
                 pass
             else:
                 if handle._cancelled:
@@ -214,7 +221,7 @@ class _SimpleTimer(QtCore.QObject):
                     handle._run()
             finally:
                 del self.__callbacks[timerid]
-                handle = None
+                del handle
             self.killTimer(timerid)
 
     def stop(self):
@@ -231,7 +238,7 @@ class ClosableLoop(Protocol):
 
 
 @with_logger
-class _QEventLoop:
+class QEventLoopMixin:
 
     """
     Implementation of asyncio event loop that uses the Qt Event loop.
@@ -263,13 +270,13 @@ class _QEventLoop:
         self.__is_running = False
         self._closed = False
         self.__debug_enabled = False
-        self.__default_executor = None
+        self.__default_executor: Optional[Executor] = None
         self.__exception_handler = None
         self._read_notifiers: dict[int, QtCore.QObject] = {}
         self._write_notifiers: dict[int, QtCore.QObject] = {}
-        self._timer = _SimpleTimer()
+        self._timer = Timer()
 
-        self.__call_soon_signaller = signaller = _make_signaller(object, tuple)
+        self.__call_soon_signaller = signaller = make_signaller(object, tuple)
         self.__call_soon_signal = signaller.signal
         signaller.signal.connect(lambda callback, args: self.call_soon(callback, *args))
 
@@ -370,7 +377,7 @@ class _QEventLoop:
         self._read_notifiers = {}
         self._write_notifiers = {}
 
-    def call_later(self, delay, callback, *args, context=None):
+    def call_later(self, delay: float, callback: Callback, *args: Any, context=None):
         """Register callback to be invoked after a certain delay."""
         if asyncio.iscoroutinefunction(callback):
             raise TypeError("coroutines cannot be used with call_later")
@@ -382,27 +389,24 @@ class _QEventLoop:
             f"Registering callback {callback} to be invoked with "
             f"arguments {args} after {delay} second(s)"
         )
-        return self._add_callback(
-            asyncio.Handle(callback, args, self, context=context), delay
-        )
-
-    def _add_callback(self, handle, delay: float = 0):
+        loop = cast(asyncio.AbstractEventLoop, self)
+        handle = asyncio.Handle(callback, args, loop, context=context)
         return self._timer.add_callback(handle, delay)
 
-    def call_soon(self, callback, *args, context=None):
+    def call_soon(self, callback: Callback, *args, context=None):
         """Register a callback to be run on the next iteration of the event loop."""
         return self.call_later(0, callback, *args, context=context)
 
-    def call_at(self, when, callback, *args, context=None):
+    def call_at(self, when: float, callback: Callback, *args, context=None):
         """Register callback to be invoked at a certain time."""
         dt = when - self.time()
         return self.call_later(dt, callback, *args, context=context)
 
-    def time(self):
+    def time(self) -> float:
         """Get time according to event loop's clock."""
         return time.monotonic()
 
-    def add_reader(self, fd: int, callback, *args):
+    def add_reader(self, fd: int, callback: Callback, *args):
         """Register a callback for when a file descriptor is ready for reading."""
         cast(ClosableLoop, self)._check_closed()
 
@@ -448,7 +452,7 @@ class _QEventLoop:
             notifier.setEnabled(False)
             return True
 
-    def add_writer(self, fd: int, callback, *args):
+    def add_writer(self, fd: int, callback: Callback, *args):
         """Register a callback for when a file descriptor is ready for writing."""
         cast(ClosableLoop, self)._check_closed()
 
@@ -484,7 +488,6 @@ class _QEventLoop:
             self.call_soon_threadsafe(self.remove_writer, (fd,))
             return
         self._logger.debug(f"Removing writer callback for file descriptor {fd}")
-        assert threading.current_thread().name == "MainThread"
         try:
             notifier = self._write_notifiers.pop(fd)
         except KeyError:
@@ -493,7 +496,14 @@ class _QEventLoop:
             notifier.setEnabled(False)
             return True
 
-    def __notifier_cb_wrapper(self, notifiers, notifier, fd, callback, args):
+    def __notifier_cb_wrapper(
+        self,
+        notifiers: dict[int, QtCore.QSocketNotifier],
+        notifier: QtCore.QSocketNotifier,
+        fd: int,
+        callback: Callback,
+        args: tuple,
+    ):
         # This wrapper gets called with a certain delay. We cannot know
         # for sure that the notifier is still the current notifier for
         # the fd.
@@ -509,7 +519,14 @@ class _QEventLoop:
             else:
                 notifier.activated.disconnect()
 
-    def __on_notifier_ready(self, notifiers, notifier, fd, callback, args):
+    def __on_notifier_ready(
+        self,
+        notifiers: dict[int, QtCore.QSocketNotifier],
+        notifier: QtCore.QSocketNotifier,
+        fd: int,
+        callback: Callback,
+        args: tuple,
+    ):
         log = self._logger
         if fd not in notifiers:
             log.warning(
@@ -530,11 +547,11 @@ class _QEventLoop:
 
     # Methods for interacting with threads.
 
-    def call_soon_threadsafe(self, callback, *args, context=None):
+    def call_soon_threadsafe(self, callback: Callback, *args, context=None):
         """Thread-safe version of call_soon."""
         self.__call_soon_signal.emit(callback, args)
 
-    def run_in_executor(self, executor, callback, *args):
+    def run_in_executor(self, executor: Executor, callback: Callback, *args):
         """Run callback in executor.
 
         If no executor is provided, the default executor will be used, which defers execution to
@@ -561,7 +578,7 @@ class _QEventLoop:
 
         return asyncio.wrap_future(executor.submit(callback, *args))
 
-    def set_default_executor(self, executor):
+    def set_default_executor(self, executor: Executor):
         self.__default_executor = executor
 
     # Error handlers.
@@ -569,7 +586,7 @@ class _QEventLoop:
     def set_exception_handler(self, handler):
         self.__exception_handler = handler
 
-    def default_exception_handler(self, context):
+    def default_exception_handler(self, context: dict[str, Any]):
         """Handle exceptions.
 
         This is the default exception handler.
@@ -589,18 +606,19 @@ class _QEventLoop:
         try:
             exception = context["exception"]
         except KeyError:
-            exc_info = False
+            exc_info: Union[bool, tuple] = False
         else:
             exc_info = (type(exception), exception, exception.__traceback__)
 
         log_lines = [message]
         excluded = {"message", "exception"}
-        for key in [k for k in sorted(context) if k not in excluded]:
-            log_lines.append("{}: {!r}".format(key, context[key]))
+        for key in sorted(context):
+            if key not in excluded:
+                log_lines.append("{}: {!r}".format(key, context[key]))
 
         self.__log_error("\n".join(log_lines), exc_info=exc_info)
 
-    def call_exception_handler(self, context):
+    def call_exception_handler(self, context: dict[str, Any]):
         if self.__exception_handler is None:
             try:
                 self.default_exception_handler(context)
@@ -641,8 +659,8 @@ class _QEventLoop:
     def get_debug(self):
         return self.__debug_enabled
 
-    def set_debug(self, enabled):
-        super().set_debug(enabled)
+    def set_debug(self, enabled: bool):
+        cast(asyncio.AbstractEventLoop, super()).set_debug(enabled)
         self.__debug_enabled = enabled
 
     def __enter__(self):
@@ -659,24 +677,26 @@ class _QEventLoop:
         try:
             cls._logger.error(*args, **kwds)
         except Exception:
-            sys.stderr.write("{!r}, {!r}\n".format(args, kwds))
+            sys.stderr.write(f"{args!r}, {kwds!r}\n")
 
 
-from ._unix import _SelectorEventLoop  # noqa
+from .unix import SelectorEventLoop  # noqa: E402
 
-QSelectorEventLoop = type("QSelectorEventLoop", (_QEventLoop, _SelectorEventLoop), {})
+QSelectorEventLoop = type(
+    "QSelectorEventLoop", (QEventLoopMixin, SelectorEventLoop), {}
+)
 
 if os.name == "nt":
-    from ._windows import _ProactorEventLoop
+    from .windows import ProactorEventLoop  # noqa: E402
 
-    QIOCPEventLoop = type("QIOCPEventLoop", (_QEventLoop, _ProactorEventLoop), {})
+    QIOCPEventLoop = type("QIOCPEventLoop", (QEventLoopMixin, ProactorEventLoop), {})
     QEventLoop = QIOCPEventLoop
 else:
     QEventLoop = QSelectorEventLoop
 
 
 class _Cancellable:
-    def __init__(self, timer: _SimpleTimer, loop: _QEventLoop):
+    def __init__(self, timer: Timer, loop: QEventLoopMixin):
         self.__timer = timer
         self.__loop = loop
 
@@ -684,7 +704,7 @@ class _Cancellable:
         self.__timer.stop()
 
 
-def asyncClose(fn):
+def asyncClose(fn: Callback):
     """Allow to run async code before application is closed."""
 
     @functools.wraps(fn)
@@ -696,10 +716,10 @@ def asyncClose(fn):
     return wrapper
 
 
-def asyncSlot(*args):
+def asyncSlot(*args: type):
     """Make a Qt async slot run on asyncio loop."""
 
-    def outer_decorator(fn):
+    def outer_decorator(fn: Callback):
         @Slot(*args)
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):

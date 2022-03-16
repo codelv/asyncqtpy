@@ -1,12 +1,12 @@
 asyncqtpy - asyncio + PyQt5/PySide2
 =================================
 
-.. image:: https://ci.appveyor.com/api/projects/status/s74qrypga40somf1?svg=true
-    :target: https://ci.appveyor.com/project/gmarull/asyncqtpy
+.. image:: https://github.com/codelv/asyncqtpy/actions/workflows/ci.yml/badge.svg
+    :target: https://github.com/codelv/asyncqtpy/actions
     :alt: Build Status
 
-.. image:: https://codecov.io/gh/gmarull/asyncqtpy/branch/master/graph/badge.svg
-    :target: https://codecov.io/gh/gmarull/asyncqtpy
+.. image:: https://codecov.io/gh/codelv/asyncqtpy/branch/master/graph/badge.svg
+    :target: https://codecov.io/gh/codelv/asyncqtpy
     :alt: Coverage
 
 .. image:: https://img.shields.io/pypi/v/asyncqtpy.svg

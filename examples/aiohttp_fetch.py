@@ -12,7 +12,7 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from asyncqt import QEventLoop, asyncClose, asyncSlot
+from asyncqtpy import QEventLoop, asyncClose, asyncSlot
 
 
 class MainWindow(QWidget):

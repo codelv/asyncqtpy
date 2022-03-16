@@ -9,9 +9,9 @@ import logging
 
 def with_logger(cls):
     """Class decorator to add a logger to a class."""
-    cls_name = cls.__qualname__
     module = cls.__module__
     assert module is not None
-    cls_name = f"{module}.{cls_name}"
-    cls._logger = logging.getLogger(cls_name)
+    cls_name = f"{module}.{cls.__qualname__}"
+    logger = cls._logger = logging.getLogger(cls_name)
+    logger.setLevel(logging.WARNING)
     return cls
