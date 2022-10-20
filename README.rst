@@ -17,8 +17,6 @@ asyncqtpy - asyncio + qtpy
     :target: https://anaconda.org/conda-forge/asyncqtpy
     :alt: Conda Version
 
-**IMPORTANT: This project is unmaintained. Use other alternatives such as https://github.com/CabbageDevelopment/qasync**
-
 ``asyncqtpy`` is an implementation of the ``PEP 3156`` event-loop with Qt. This
 package is a fork of ``asyncqt`` updated to use qtpy and 3.9+ type hints.
 
