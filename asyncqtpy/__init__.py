@@ -13,7 +13,7 @@ __author__ = (
     "Mark Harviston <mark.harviston@gmail.com>, "
     "Arve Knudsen <arve.knudsen@gmail.com>"
 )
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 __url__ = "https://github.com/codelv/asyncqtpy"
 __license__ = "BSD"
 __all__ = (
@@ -50,8 +50,7 @@ Callback = Callable[..., Any]
 
 
 class Executor(Protocol):
-    def submit(self, callback: Callback, *args, **kwargs):
-        ...
+    def submit(self, callback: Callback, *args, **kwargs): ...
 
 
 def is_main_thread() -> bool:
@@ -60,7 +59,6 @@ def is_main_thread() -> bool:
 
 @with_logger
 class QThreadWorker(QtCore.QThread):
-
     """
     Read jobs from the queue and then execute them.
 
@@ -112,7 +110,6 @@ class QThreadWorker(QtCore.QThread):
 
 @with_logger
 class QThreadExecutor:
-
     """
     ThreadExecutor that produces QThreads.
 
@@ -230,16 +227,13 @@ class Timer(QtCore.QObject):
 
 
 class ClosableLoop(Protocol):
-    def is_closed(self) -> bool:
-        ...
+    def is_closed(self) -> bool: ...
 
-    def _check_closed(self) -> None:
-        ...
+    def _check_closed(self) -> None: ...
 
 
 @with_logger
 class QEventLoopMixin:
-
     """
     Implementation of asyncio event loop that uses the Qt Event loop.
 

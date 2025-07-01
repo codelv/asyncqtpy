@@ -77,7 +77,6 @@ ExceptionTester = type(
 
 
 class TestCanRunTasksInExecutor:
-
     """
     Test Cases Concerning running jobs in Executors.
 
@@ -183,6 +182,7 @@ def test_can_communicate_subprocess(loop):
 
 def test_can_terminate_subprocess(loop):
     """Verify that a subprocess can be terminated."""
+
     # Start a never-ending process
     async def mycoro():
         process = await asyncio.create_subprocess_exec(

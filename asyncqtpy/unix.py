@@ -13,14 +13,21 @@ from typing import Iterator, Optional, Protocol, Union
 from . import QtCore, with_logger
 
 QSocketNotifier = QtCore.QSocketNotifier
+if hasattr(QtCore, "QSocketDescriptor"):
+    # PySide
+    QSocketDescriptor = QtCore.QSocketDescriptor
+else:
+    # PyQt (unused)
+    class QSocketDescriptor:
+        pass
+
 
 EVENT_READ = 1 << 0
 EVENT_WRITE = 1 << 1
 
 
 class HasFileno(Protocol):
-    def fileno(self) -> int:
-        ...
+    def fileno(self) -> int: ...
 
 
 FileObj = Union[int, HasFileno]
@@ -55,7 +62,6 @@ def _fileobj_to_fd(fileobj: Union[int, HasFileno, selectors.SelectorKey]) -> int
 
 
 class SelectorMapping(collections.abc.Mapping):
-
     """Mapping of file objects to selector keys."""
 
     def __init__(self, selector: "Selector"):
@@ -140,13 +146,13 @@ class Selector(selectors.BaseSelector):
 
         return key
 
-    def __on_read_activated(self, fd: int):
+    def __on_read_activated(self, fd: Union[int, QSocketDescriptor]):
         # self._logger.debug(f"File {fd} ready to read")
         key = self._key_from_fd(fd)
         if key:
             self.__parent._process_event(key, EVENT_READ & key.events)
 
-    def __on_write_activated(self, fd: int):
+    def __on_write_activated(self, fd: Union[int, QSocketDescriptor]):
         # On python 3.10 this fires continuously...
         # self._logger.debug(f"File {fd} ready to write")
         key = self._key_from_fd(fd)
@@ -154,16 +160,16 @@ class Selector(selectors.BaseSelector):
             self.__parent._process_event(key, EVENT_WRITE & key.events)
             self._pause_writer(fd)
 
-    def _pause_writer(self, fd: int, timeout: float = 0.1):
+    def _pause_writer(self, fd: Union[int, QSocketDescriptor], timeout: float = 0.1):
         # Pause write callbacks for a few ms to avoid high cpu usage
-        notifier = self.__write_notifiers[fd]
+        notifier = self._notifier_from_fd(fd)
         notifier.setEnabled(False)
         loop = asyncio.get_event_loop()
         loop.call_later(timeout, self._resume_writer, fd)
 
     def _resume_writer(self, fd: int):
         try:
-            notifier = self.__write_notifiers[fd]
+            notifier = self._notifier_from_fd(fd)
             notifier.setEnabled(True)
         except KeyError:
             pass
@@ -213,19 +219,43 @@ class Selector(selectors.BaseSelector):
     def get_map(self):
         return self.__map
 
-    def _key_from_fd(self, fd: int) -> Optional[selectors.SelectorKey]:
+    def _notifier_from_fd(self, fd: Union[int, QSocketDescriptor]) -> QSocketNotifier:
         """
-        Return the key associated to a given file descriptor.
+        Return the notifier associated to a given file or socket descriptor.
 
         Parameters:
-        fd -- file descriptor
+        fd -- file or socket descriptor
+
+        Returns:
+        corresponding notifier, or None if not found
+        """
+        if isinstance(fd, QSocketDescriptor):
+            for k in self.__write_notifiers:
+                if fd == k:
+                    return self.__write_notifiers[k]
+            raise KeyError(f"Notifier for {fd} not found")
+        return self.__write_notifiers[fd]
+
+    def _key_from_fd(
+        self, fd: Union[int, QSocketDescriptor]
+    ) -> Optional[selectors.SelectorKey]:
+        """
+        Return the key associated to a given file or socket descriptor.
+
+        Parameters:
+        fd -- file or socket descriptor
 
         Returns:
         corresponding key, or None if not found
 
         """
         try:
-            return self._fd_to_key[fd]
+            if isinstance(fd, QSocketDescriptor):
+                for k in self._fd_to_key:
+                    if fd == k:
+                        return self._fd_to_key[k]
+            else:
+                return self._fd_to_key[fd]
         except KeyError:
             return None
 
