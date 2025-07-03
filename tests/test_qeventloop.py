@@ -210,7 +210,6 @@ def test_loop_running(loop):
     """Verify that loop.is_running returns True when running."""
 
     async def is_running():
-        nonlocal loop
         assert loop.is_running()
 
     loop.run_until_complete(is_running())
@@ -244,8 +243,10 @@ def test_call_later_must_not_be_coroutine(loop):
         await asyncio.sleep(0.1)
         return None
 
+    coro = mycoro()
     with pytest.raises(TypeError):
-        loop.call_soon(mycoro())
+        loop.call_soon(coro)
+    coro.close()  # avoid warning
 
 
 def test_call_later_must_be_callable(loop):
@@ -544,9 +545,11 @@ def test_regression_bug13(loop, sock_pair):
 
     result1 = None
     result3 = None
+    called = 0
 
     async def client_coro():
         def cb1():
+            print("cb1")
             nonlocal result1
             assert result1 is None
             loop.remove_reader(c_sock.fileno())
@@ -554,16 +557,23 @@ def test_regression_bug13(loop, sock_pair):
             loop.add_writer(c_sock.fileno(), cb2)
 
         def cb2():
-            nonlocal result3
+            print("cb2")
             assert result3 is None
             c_sock.send(b"2")
             loop.remove_writer(c_sock.fileno())
             loop.add_reader(c_sock.fileno(), cb3)
 
         def cb3():
+            print("cb3")
+            nonlocal called
+            called += 1
+            data = c_sock.recv(1)
+            if not data:
+                c_sock.close()
+                return
             nonlocal result3
             assert result3 is None
-            result3 = c_sock.recv(1)
+            result3 = data
             client_done.set_result(True)
 
         loop.add_reader(c_sock.fileno(), cb1)
@@ -575,6 +585,7 @@ def test_regression_bug13(loop, sock_pair):
     loop.run_until_complete(asyncio.wait_for(both_done, timeout=1.0))
     assert result1 == b"1"
     assert result3 == b"3"
+    assert called == 2
 
 
 def test_add_reader_replace(loop, sock_pair):
