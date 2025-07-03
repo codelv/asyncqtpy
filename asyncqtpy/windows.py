@@ -19,8 +19,9 @@ try:
 except ImportError:  # noqa
     pass  # w/o guarding this import py.test can't gather doctests on platforms w/o _winapi
 
-from . import QtCore, make_signaller
-from .common import with_logger
+from qtpy.QtCore import QMutex, QMutexLocker, QSemaphore, QThread
+
+from . import make_signaller, with_logger
 
 UINT32_MAX = 0xFFFFFFFF
 
@@ -63,7 +64,7 @@ class IocpProactor(windows_events.IocpProactor):
     def __init__(self):
         self.__events = []
         super().__init__()
-        self._lock = QtCore.QMutex()
+        self._lock = QMutex()
 
     def select(self, timeout: Optional[float] = None):
         """Override in order to handle events in a threadsafe manner."""
@@ -78,11 +79,11 @@ class IocpProactor(windows_events.IocpProactor):
         super().close()
 
     def recv(self, conn, nbytes, flags=0):
-        with QtCore.QMutexLocker(self._lock):
+        with QMutexLocker(self._lock):
             return super().recv(conn, nbytes, flags)
 
     def send(self, conn, buf, flags=0):
-        with QtCore.QMutexLocker(self._lock):
+        with QMutexLocker(self._lock):
             return super().send(conn, buf, flags)
 
     def _poll(self, timeout=None):
@@ -98,7 +99,7 @@ class IocpProactor(windows_events.IocpProactor):
             if ms >= UINT32_MAX:
                 raise ValueError("timeout too big")
 
-        with QtCore.QMutexLocker(self._lock):
+        with QMutexLocker(self._lock):
             while True:
                 # self._logger.debug('Polling IOCP with timeout {} ms in thread {}...'.format(
                 #     ms, threading.get_ident()))
@@ -126,27 +127,27 @@ class IocpProactor(windows_events.IocpProactor):
                 ms = 0
 
     def _wait_for_handle(self, handle, timeout, _is_cancel):
-        with QtCore.QMutexLocker(self._lock):
+        with QMutexLocker(self._lock):
             return super()._wait_for_handle(handle, timeout, _is_cancel)
 
     def accept(self, listener):
-        with QtCore.QMutexLocker(self._lock):
+        with QMutexLocker(self._lock):
             return super().accept(listener)
 
     def connect(self, conn, address):
-        with QtCore.QMutexLocker(self._lock):
+        with QMutexLocker(self._lock):
             return super().connect(conn, address)
 
 
 @with_logger
-class EventWorker(QtCore.QThread):
+class EventWorker(QThread):
     def __init__(self, proactor, parent):
         super().__init__()
 
         self.__stop = False
         self.__proactor = proactor
         self.__sig_events = parent.sig_events
-        self.__semaphore = QtCore.QSemaphore()
+        self.__semaphore = QSemaphore()
 
     def start(self):
         super().start()

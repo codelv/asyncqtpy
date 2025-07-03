@@ -36,29 +36,39 @@ from concurrent.futures import Future
 from queue import Queue
 from typing import Any, Callable, Optional, Protocol, Union, cast
 
-from qtpy import QtCore, QtWidgets
-
-QApplication = QtWidgets.QApplication
-Slot = QtCore.Slot
-Signal = QtCore.Signal
-
-from .common import with_logger  # noqa
+from qtpy.QtCore import QObject, QSocketNotifier, QThread, QTimerEvent, Signal, Slot
+from qtpy.QtWidgets import QApplication
 
 logger = logging.getLogger(__name__)
-
 Callback = Callable[..., Any]
+
+try:
+    from qtpy.sip import voidptr
+except ImportError:
+    from qtpy.shiboken import VoidPtr as voidptr  # type: ignore
 
 
 class Executor(Protocol):
-    def submit(self, callback: Callback, *args, **kwargs): ...
+    def submit(self, callback: Callback, *args, **kwargs):
+        raise NotImplementedError()
 
 
 def is_main_thread() -> bool:
     return threading.current_thread().name == "MainThread"
 
 
+def with_logger(cls):
+    """Class decorator to add a logger to a class."""
+    module = cls.__module__
+    assert module is not None
+    cls_name = f"{module}.{cls.__qualname__}"
+    logger = cls._logger = logging.getLogger(cls_name)
+    logger.setLevel(logging.WARNING)
+    return cls
+
+
 @with_logger
-class QThreadWorker(QtCore.QThread):
+class QThreadWorker(QThread):
     """
     Read jobs from the queue and then execute them.
 
@@ -174,19 +184,21 @@ class QThreadExecutor:
 
 
 def make_signaller(*args: type):
-    class Signaller(QtCore.QObject):
+    class Signaller(QObject):
         signal = Signal(*args)
 
     return Signaller()
 
 
 @with_logger
-class Timer(QtCore.QObject):
+class Timer(QObject):
     _logger: logging.Logger
+    __callbacks: dict[int, asyncio.Handle]
+    _stopped: bool
 
     def __init__(self):
         super().__init__()
-        self.__callbacks: dict[int, asyncio.Handle] = {}
+        self.__callbacks = {}
         self._stopped = False
 
     def add_callback(self, handle: asyncio.Handle, delay: float = 0):
@@ -196,9 +208,11 @@ class Timer(QtCore.QObject):
         self.__callbacks[timerid] = handle
         return handle
 
-    def timerEvent(self, event: QtCore.QTimerEvent):
-        timerid = event.timerId()
+    def timerEvent(self, event: Optional[QTimerEvent]):
         log = self._logger
+        if event is None:
+            return
+        timerid = event.timerId()
         if self._stopped:
             log.debug(f"Timer stopped, killing {timerid}")
             self.killTimer(timerid)
@@ -227,9 +241,11 @@ class Timer(QtCore.QObject):
 
 
 class ClosableLoop(Protocol):
-    def is_closed(self) -> bool: ...
+    def is_closed(self) -> bool:
+        raise NotImplementedError()
 
-    def _check_closed(self) -> None: ...
+    def _check_closed(self) -> None:
+        raise NotImplementedError()
 
 
 @with_logger
@@ -256,7 +272,7 @@ class QEventLoopMixin:
 
     def __init__(
         self,
-        app: Optional[QtWidgets.QApplication] = None,
+        app: Optional[QApplication] = None,
         set_running_loop: bool = True,
     ):
         self.__app = app or QApplication.instance()
@@ -266,8 +282,8 @@ class QEventLoopMixin:
         self.__debug_enabled = False
         self.__default_executor: Optional[Executor] = None
         self.__exception_handler = None
-        self._read_notifiers: dict[int, QtCore.QObject] = {}
-        self._write_notifiers: dict[int, QtCore.QObject] = {}
+        self._read_notifiers: dict[int, QSocketNotifier] = {}
+        self._write_notifiers: dict[int, QSocketNotifier] = {}
         self._timer = Timer()
 
         self.__call_soon_signaller = signaller = make_signaller(object, tuple)
@@ -418,7 +434,7 @@ class QEventLoopMixin:
             existing.activated.disconnect()
             # will get overwritten by the assignment below anyways
 
-        notifier = QtCore.QSocketNotifier(fd, QtCore.QSocketNotifier.Read)
+        notifier = QSocketNotifier(cast(voidptr, fd), QSocketNotifier.Type.Read)
         notifier.setEnabled(True)
         self._logger.debug(f"Adding reader callback for file descriptor {fd}")
         notifier.activated.connect(
@@ -464,7 +480,7 @@ class QEventLoopMixin:
             existing.activated.disconnect()
             # will get overwritten by the assignment below anyways
 
-        notifier = QtCore.QSocketNotifier(fd, QtCore.QSocketNotifier.Write)
+        notifier = QSocketNotifier(cast(voidptr, fd), QSocketNotifier.Type.Write)
         notifier.setEnabled(True)
         self._logger.debug(f"Adding writer callback for file descriptor {fd}")
         notifier.activated.connect(
@@ -492,8 +508,8 @@ class QEventLoopMixin:
 
     def __notifier_cb_wrapper(
         self,
-        notifiers: dict[int, QtCore.QSocketNotifier],
-        notifier: QtCore.QSocketNotifier,
+        notifiers: dict[int, QSocketNotifier],
+        notifier: QSocketNotifier,
         fd: int,
         callback: Callback,
         args: tuple,
@@ -515,8 +531,8 @@ class QEventLoopMixin:
 
     def __on_notifier_ready(
         self,
-        notifiers: dict[int, QtCore.QSocketNotifier],
-        notifier: QtCore.QSocketNotifier,
+        notifiers: dict[int, QSocketNotifier],
+        notifier: QSocketNotifier,
         fd: int,
         callback: Callback,
         args: tuple,
