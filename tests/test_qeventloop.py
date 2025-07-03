@@ -239,6 +239,7 @@ def test_future_not_done_on_loop_shutdown(loop):
 
 def test_call_later_must_not_be_coroutine(loop):
     """Verify TypeError occurs when call_later is given a coroutine."""
+
     async def mycoro():
         await asyncio.sleep(0.1)
         return None
