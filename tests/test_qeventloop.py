@@ -237,12 +237,14 @@ def test_future_not_done_on_loop_shutdown(loop):
         loop.run_until_complete(fut)
 
 
-def test_call_later_must_not_coroutine(loop):
-    """Verify TypeError occurs call_later is given a coroutine."""
-    mycoro = asyncio.coroutine(lambda: None)
+def test_call_later_must_not_be_coroutine(loop):
+    """Verify TypeError occurs when call_later is given a coroutine."""
+    async def mycoro():
+        await asyncio.sleep(0.1)
+        return None
 
     with pytest.raises(TypeError):
-        loop.call_soon(mycoro)
+        loop.call_soon(mycoro())
 
 
 def test_call_later_must_be_callable(loop):
