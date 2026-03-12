@@ -13,7 +13,7 @@ __author__ = (
     "Mark Harviston <mark.harviston@gmail.com>, "
     "Arve Knudsen <arve.knudsen@gmail.com>"
 )
-__version__ = "0.11.0"
+__version__ = "0.11.1"
 __url__ = "https://github.com/codelv/asyncqtpy"
 __license__ = "BSD"
 __all__ = (
@@ -690,18 +690,17 @@ class QEventLoopMixin:
             sys.stderr.write(f"{args!r}, {kwds!r}\n")
 
 
-from .unix import SelectorEventLoop  # noqa: E402
-
-QSelectorEventLoop = type(
-    "QSelectorEventLoop", (QEventLoopMixin, SelectorEventLoop), {}
-)
-
 if os.name == "nt":
     from .windows import ProactorEventLoop  # noqa: E402
 
     QIOCPEventLoop = type("QIOCPEventLoop", (QEventLoopMixin, ProactorEventLoop), {})
     QEventLoop = QIOCPEventLoop
 else:
+    from .unix import SelectorEventLoop  # noqa: E402
+
+    QSelectorEventLoop = type(
+        "QSelectorEventLoop", (QEventLoopMixin, SelectorEventLoop), {}
+    )
     QEventLoop = QSelectorEventLoop
 
 

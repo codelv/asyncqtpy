@@ -4,6 +4,7 @@
 # BSD License
 
 """UNIX specific Quamash functionality."""
+
 import asyncio
 import collections
 import logging
